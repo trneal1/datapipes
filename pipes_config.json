@@ -1,0 +1,27 @@
+{
+  "pipes": [
+    {
+      "name": "test",
+      "listen_host": "0.0.0.0",
+      "listen_port": 9000,
+      "outgoing_host": "127.0.0.1",
+      "outgoing_port": 9100,
+      "delimiter": ",",
+      "delimiters": [
+        ","
+      ],
+      "incoming_record_delimiter": "\n",
+      "outgoing_record_delimiter": "\n",
+      "strip_chars": [],
+      "field_names": [
+        "fld1",
+        "fld2"
+      ],
+      "field_types": [
+        "text",
+        "numeric"
+      ],
+      "enabled": true
+    }
+  ]
+}
