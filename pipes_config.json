@@ -2,24 +2,55 @@
   "pipes": [
     {
       "name": "test",
+      "input_mode": "http_pull",
       "listen_host": "0.0.0.0",
       "listen_port": 9000,
-      "outgoing_host": "127.0.0.1",
+      "outgoing_host": "172.26.40.244",
       "outgoing_port": 9100,
-      "delimiter": ",",
+      "http_url": "http://esp_th_a.lan/temp",
+      "http_urls": [
+        "http://esp_th_a.lan/temp",
+        "http://esp_th_u.lan/temp",
+        "http://esp_th_g.lan/temp",
+        "http://esp_th_d.lan/temp"
+      ],
+      "http_port": 80,
+      "http_interval_seconds": 5,
+      "http_timeout_seconds": 10,
+      "delimiter": "\\t",
+      "delimiter_mode": "regex",
       "delimiters": [
-        ","
+        "\\t"
       ],
       "incoming_record_delimiter": "\n",
       "outgoing_record_delimiter": "\n",
       "strip_chars": [],
+      "included_fields": "",
       "field_names": [
-        "fld1",
-        "fld2"
+        "temp",
+        "humd"
       ],
       "field_types": [
-        "text",
+        "numeric",
         "numeric"
+      ],
+      "json_tags": [
+        {
+          "name": "SRC",
+          "source": "text",
+          "field_number": 0,
+          "value": "src#[\"a\",\"u\",\"d\",\"g\"]",
+          "value_type": "text",
+          "transform": "none"
+        },
+        {
+          "name": "mult",
+          "source": "numeric",
+          "field_number": 0,
+          "value": "f1*5",
+          "value_type": "numeric",
+          "transform": "none"
+        }
       ],
       "enabled": true
     }
