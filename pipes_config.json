@@ -1,12 +1,77 @@
 {
   "pipes": [
     {
-      "name": "test",
+      "name": "co2",
       "input_mode": "http_pull",
       "listen_host": "0.0.0.0",
       "listen_port": 9000,
-      "outgoing_host": "172.26.40.244",
-      "outgoing_port": 9100,
+      "outgoing_host": "splunk.lan",
+      "outgoing_port": 12001,
+      "http_url": "http://esp_sdc40.lan/co2",
+      "http_urls": [
+        "http://esp_sdc40.lan/co2"
+      ],
+      "http_port": 0,
+      "http_interval_seconds": 60,
+      "http_timeout_seconds": 10,
+      "delimiter": "\\t",
+      "delimiter_mode": "literal",
+      "delimiters": [
+        "\t"
+      ],
+      "incoming_record_delimiter": "\n",
+      "outgoing_record_delimiter": "\n",
+      "strip_chars": [],
+      "included_fields": "",
+      "field_names": [
+        "co2",
+        "temp_c",
+        "humd",
+        "co2_all_max",
+        "co2_min",
+        "co2_max",
+        "co2_avg",
+        "co2_num",
+        "run_time"
+      ],
+      "field_types": [
+        "numeric",
+        "numeric",
+        "numeric",
+        "numeric",
+        "numeric",
+        "numeric",
+        "numeric",
+        "numeric",
+        "numeric"
+      ],
+      "json_tags": [
+        {
+          "name": "type",
+          "source": "constant",
+          "field_number": 0,
+          "value": "co2",
+          "value_type": "text",
+          "transform": "none"
+        },
+        {
+          "name": "src",
+          "source": "constant",
+          "field_number": 0,
+          "value": "scd40",
+          "value_type": "text",
+          "transform": "none"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "name": "TH",
+      "input_mode": "http_pull",
+      "listen_host": "0.0.0.0",
+      "listen_port": 9000,
+      "outgoing_host": "splunk.lan",
+      "outgoing_port": 12001,
       "http_url": "http://esp_th_a.lan/temp",
       "http_urls": [
         "http://esp_th_a.lan/temp",
@@ -15,7 +80,7 @@
         "http://esp_th_d.lan/temp"
       ],
       "http_port": 80,
-      "http_interval_seconds": 5,
+      "http_interval_seconds": 60,
       "http_timeout_seconds": 10,
       "delimiter": "\\t",
       "delimiter_mode": "regex",
@@ -27,31 +92,127 @@
       "strip_chars": [],
       "included_fields": "",
       "field_names": [
-        "temp",
-        "humd"
+        "temp_c",
+        "temp_f",
+        "humd",
+        "humd_c"
       ],
       "field_types": [
+        "numeric",
+        "numeric",
         "numeric",
         "numeric"
       ],
       "json_tags": [
         {
-          "name": "SRC",
+          "name": "src",
           "source": "text",
           "field_number": 0,
-          "value": "src#[\"a\",\"u\",\"d\",\"g\"]",
+          "value": "th_#[\"a\",\"u\",\"d\",\"g\"]",
           "value_type": "text",
-          "transform": "none"
+          "transform": "rstrip"
         },
         {
-          "name": "mult",
-          "source": "numeric",
+          "name": "type",
+          "source": "constant",
           "field_number": 0,
-          "value": "f1*5",
-          "value_type": "numeric",
+          "value": "TH",
+          "value_type": "text",
           "transform": "none"
         }
       ],
+      "enabled": true
+    },
+    {
+      "name": "tcp",
+      "input_mode": "tcp",
+      "listen_host": "0.0.0.0",
+      "listen_port": 17001,
+      "outgoing_host": "splunk.lan",
+      "outgoing_port": 17001,
+      "http_url": "",
+      "http_urls": [],
+      "http_port": 0,
+      "http_interval_seconds": 60,
+      "http_timeout_seconds": 10,
+      "delimiter": "\\t",
+      "delimiter_mode": "literal",
+      "delimiters": [
+        "\t"
+      ],
+      "incoming_record_delimiter": "|",
+      "outgoing_record_delimiter": "\n",
+      "strip_chars": [],
+      "included_fields": "",
+      "field_names": [
+        "start",
+        "stop",
+        "sip",
+        "sport",
+        "dip",
+        "dport",
+        "pkts",
+        "byte",
+        "recs"
+      ],
+      "field_types": [
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text"
+      ],
+      "json_tags": [],
+      "enabled": true
+    },
+    {
+      "name": "udp",
+      "input_mode": "tcp",
+      "listen_host": "0.0.0.0",
+      "listen_port": 17002,
+      "outgoing_host": "splunk.lan",
+      "outgoing_port": 17002,
+      "http_url": "",
+      "http_urls": [],
+      "http_port": 0,
+      "http_interval_seconds": 60,
+      "http_timeout_seconds": 10,
+      "delimiter": "\\t",
+      "delimiter_mode": "literal",
+      "delimiters": [
+        "\t"
+      ],
+      "incoming_record_delimiter": "|",
+      "outgoing_record_delimiter": "\n",
+      "strip_chars": [],
+      "included_fields": "",
+      "field_names": [
+        "start",
+        "stop",
+        "sio",
+        "sport",
+        "dip",
+        "dport",
+        "pkts",
+        "bytes",
+        "recs"
+      ],
+      "field_types": [
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text",
+        "text"
+      ],
+      "json_tags": [],
       "enabled": true
     }
   ]

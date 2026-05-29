@@ -46,7 +46,7 @@ import socket
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from urllib.parse import urlsplit, urlunsplit
 
 from aiohttp import ClientSession, ClientTimeout, web
@@ -446,6 +446,7 @@ class PipeRuntime:
         self.reconnect_task: Optional[asyncio.Task] = None
         self.outgoing_monitor_task: Optional[asyncio.Task] = None
         self.http_pull_task: Optional[asyncio.Task] = None
+        self.client_writers: Set[asyncio.StreamWriter] = set()
 
         self.send_lock = asyncio.Lock()
         self.stopping = False
@@ -565,6 +566,18 @@ class PipeRuntime:
             await self.server.wait_closed()
             self.server = None
 
+        client_writers = list(self.client_writers)
+        for writer in client_writers:
+            writer.close()
+
+        for writer in client_writers:
+            try:
+                await writer.wait_closed()
+            except (ConnectionError, OSError):
+                pass
+
+        self.client_writers.clear()
+
         self.outgoing_status = "stopped"
         self.input_status = "stopped"
         print(f"Pipe '{self.config.name}' stopped")
@@ -650,6 +663,7 @@ class PipeRuntime:
     ) -> None:
         peer = writer.get_extra_info("peername")
         print(f"Pipe '{self.config.name}' accepted connection from {peer}")
+        self.client_writers.add(writer)
 
         buffer = ""
         record_delimiter = self.config.incoming_record_delimiter
@@ -666,8 +680,12 @@ class PipeRuntime:
                     record, buffer = buffer.split(record_delimiter, 1)
                     await self.process_record(record)
         finally:
+            self.client_writers.discard(writer)
             writer.close()
-            await writer.wait_closed()
+            try:
+                await writer.wait_closed()
+            except (ConnectionError, OSError):
+                pass
             print(f"Pipe '{self.config.name}' closed connection from {peer}")
 
     async def process_records_text(
