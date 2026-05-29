@@ -4,8 +4,8 @@ Data Pipe Service
 
 Features:
 - Multiple configurable input pipes.
-- Each pipe can receive pushed TCP records or periodically pull records from HTTP.
-- TCP input pipes listen on their own TCP port.
+- Each pipe can receive pushed TCP/UDP records or periodically pull records from HTTP.
+- TCP and UDP input pipes listen on their own port.
 - Incoming record delimiter is configurable per pipe; default is \n.
 - Outgoing record delimiter is configurable per pipe; default is \n.
 - Each pipe may define one or more field delimiters.
@@ -61,7 +61,7 @@ RECONNECT_DELAY_SECONDS = 2
 CLOSE_TIMEOUT_SECONDS = 1
 
 ALLOWED_FIELD_TYPES = {"text", "numeric"}
-ALLOWED_INPUT_MODES = {"tcp", "http_pull"}
+ALLOWED_INPUT_MODES = {"tcp", "udp", "http_pull"}
 ALLOWED_DELIMITER_MODES = {"literal", "regex"}
 ALLOWED_JSON_TAG_SOURCES = {"constant", "field", "numeric", "text"}
 ALLOWED_JSON_TAG_TRANSFORMS = {"none", "strip", "upper", "lower", "title", "lstrip", "rstrip"}
@@ -269,7 +269,7 @@ class PipeConfig:
             raise ValueError("Pipe name is required.")
 
         if self.input_mode not in ALLOWED_INPUT_MODES:
-            raise ValueError("Input mode must be tcp or http_pull.")
+            raise ValueError("Input mode must be tcp, udp, or http_pull.")
 
         if self.delimiter_mode not in ALLOWED_DELIMITER_MODES:
             raise ValueError("Field delimiter mode must be literal or regex.")
@@ -305,7 +305,7 @@ class PipeConfig:
         self.http_interval_seconds = int(self.http_interval_seconds)
         self.http_timeout_seconds = int(self.http_timeout_seconds)
 
-        if self.input_mode == "tcp" and not (1 <= self.listen_port <= 65535):
+        if self.input_mode in {"tcp", "udp"} and not (1 <= self.listen_port <= 65535):
             raise ValueError("Listen port must be between 1 and 65535.")
 
         if not (1 <= self.outgoing_port <= 65535):
@@ -436,6 +436,7 @@ class PipeRuntime:
     def __init__(self, config: PipeConfig, record_count: int = 0):
         self.config = config
         self.server: Optional[asyncio.AbstractServer] = None
+        self.udp_transport: Optional[asyncio.DatagramTransport] = None
 
         self.outgoing_reader: Optional[asyncio.StreamReader] = None
         self.outgoing_writer: Optional[asyncio.StreamWriter] = None
@@ -514,7 +515,11 @@ class PipeRuntime:
         return status
 
     async def start(self) -> None:
-        if self.server is not None or self.http_pull_task is not None:
+        if (
+            self.server is not None
+            or self.udp_transport is not None
+            or self.http_pull_task is not None
+        ):
             return
 
         self.stopping = False
@@ -530,6 +535,16 @@ class PipeRuntime:
                 f"Pipe '{self.config.name}' pulling {len(self.config.http_urls)} URLs "
                 f"every {self.config.http_interval_seconds}s"
             )
+        elif self.config.input_mode == "udp":
+            loop = asyncio.get_running_loop()
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda: UdpPipeProtocol(self),
+                local_addr=(self.config.listen_host, self.config.listen_port),
+            )
+            self.udp_transport = transport
+            socket_name = transport.get_extra_info("sockname")
+            self.input_status = f"listening for UDP on {socket_name}"
+            print(f"Pipe '{self.config.name}' listening for UDP on {socket_name}")
         else:
             self.server = await asyncio.start_server(
                 self.handle_client,
@@ -560,6 +575,10 @@ class PipeRuntime:
             self.reconnect_task = None
 
         await self.close_outgoing()
+
+        if self.udp_transport is not None:
+            self.udp_transport.close()
+            self.udp_transport = None
 
         if self.server is not None:
             self.server.close()
@@ -687,6 +706,18 @@ class PipeRuntime:
             except (ConnectionError, OSError):
                 pass
             print(f"Pipe '{self.config.name}' closed connection from {peer}")
+
+    async def handle_udp_datagram(self, data: bytes, addr: object) -> None:
+        text = data.decode("utf-8", errors="replace")
+        processed_count = await self.process_datagram_text(text)
+        self.input_status = f"last UDP datagram from {addr}; processed {processed_count} records"
+
+    async def process_datagram_text(self, text: str) -> int:
+        record_delimiter = self.config.incoming_record_delimiter
+        if record_delimiter not in text:
+            return 1 if await self.process_record(text) else 0
+
+        return await self.process_records_text(text)
 
     async def process_records_text(
         self,
@@ -1143,6 +1174,18 @@ class PipeRuntime:
                 raise
 
 
+class UdpPipeProtocol(asyncio.DatagramProtocol):
+    def __init__(self, runtime: PipeRuntime):
+        self.runtime = runtime
+
+    def datagram_received(self, data: bytes, addr: object) -> None:
+        asyncio.create_task(self.runtime.handle_udp_datagram(data, addr))
+
+    def error_received(self, exc: Exception) -> None:
+        self.runtime.input_status = f"UDP receiver error: {exc}"
+        print(f"Pipe '{self.runtime.config.name}' UDP receiver error: {exc}")
+
+
 class PipeManager:
     def __init__(self, store: ConfigStore):
         self.store = store
@@ -1150,10 +1193,12 @@ class PipeManager:
         self.record_counts: Dict[str, int] = {}
 
     @staticmethod
-    def is_port_available(host: str, port: int) -> bool:
+    def is_port_available(host: str, port: int, protocol: str = "tcp") -> bool:
+        socket_type = socket.SOCK_DGRAM if protocol == "udp" else socket.SOCK_STREAM
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_socket:
-                test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            with socket.socket(socket.AF_INET, socket_type) as test_socket:
+                if protocol == "tcp":
+                    test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 test_socket.bind((host, int(port)))
             return True
         except OSError:
@@ -1167,8 +1212,8 @@ class PipeManager:
                 continue
 
             if (
-                pipe.input_mode == "tcp"
-                and existing_pipe.input_mode == "tcp"
+                pipe.input_mode in {"tcp", "udp"}
+                and existing_pipe.input_mode == pipe.input_mode
                 and int(existing_pipe.listen_port) == int(pipe.listen_port)
             ):
                 raise ValueError(
@@ -1179,14 +1224,14 @@ class PipeManager:
         active_same_pipe = self.runtimes.get(original_name or pipe.name)
         same_active_port = (
             active_same_pipe is not None
-            and pipe.input_mode == "tcp"
-            and active_same_pipe.config.input_mode == "tcp"
+            and pipe.input_mode in {"tcp", "udp"}
+            and active_same_pipe.config.input_mode == pipe.input_mode
             and int(active_same_pipe.config.listen_port) == int(pipe.listen_port)
             and active_same_pipe.config.listen_host == pipe.listen_host
         )
 
-        if pipe.enabled and pipe.input_mode == "tcp" and not same_active_port:
-            if not self.is_port_available(pipe.listen_host, pipe.listen_port):
+        if pipe.enabled and pipe.input_mode in {"tcp", "udp"} and not same_active_port:
+            if not self.is_port_available(pipe.listen_host, pipe.listen_port, pipe.input_mode):
                 raise ValueError(
                     f"Incoming port {pipe.listen_port} on {pipe.listen_host} "
                     f"is already in use."
@@ -1353,7 +1398,7 @@ HTML_PAGE = r"""
 </head>
 <body>
   <h1>Data Pipe Configuration</h1>
-  <p class="muted">Records are received over TCP or pulled from HTTP and transformed into delimited JSON records.</p>
+  <p class="muted">Records are received over TCP/UDP or pulled from HTTP and transformed into delimited JSON records.</p>
   <div id="notice" class="notice"></div>
 
   <div class="card">
@@ -1374,6 +1419,7 @@ HTML_PAGE = r"""
           <label for="input_mode">Input Mode</label>
           <select id="input_mode">
             <option value="tcp">TCP Push</option>
+            <option value="udp">UDP Push</option>
             <option value="http_pull">HTTP Pull</option>
           </select>
         </div>
@@ -1571,6 +1617,12 @@ space
     $('http_urls').required = isHttpPull;
     $('http_interval_seconds').required = isHttpPull;
     $('http_timeout_seconds').required = isHttpPull;
+  }
+
+  function inputModeLabel(mode) {
+    if (mode === 'http_pull') return 'HTTP Pull';
+    if (mode === 'udp') return 'UDP Push';
+    return 'TCP Push';
   }
 
   function addFieldRow(name, type) {
@@ -1874,7 +1926,7 @@ space
       const statusTitle = pipe.outgoing_status
         ? ` title="${escapeHtml((pipe.input_status || '') + ' | ' + pipe.outgoing_status)}"`
         : '';
-      const modeLabel = (pipe.input_mode || 'tcp') === 'http_pull' ? 'HTTP Pull' : 'TCP Push';
+      const modeLabel = inputModeLabel(pipe.input_mode || 'tcp');
 
       card.innerHTML = `
         <h3>${escapeHtml(pipe.name)}</h3>
